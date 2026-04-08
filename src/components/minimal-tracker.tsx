@@ -43,6 +43,14 @@ type MangaMeta = {
   totalVolumes: number;
 };
 
+type EntryCache = {
+  userId: string;
+  entries: Entry[];
+};
+
+let entryCache: EntryCache | null = null;
+let entryRequest: Promise<Entry[]> | null = null;
+
 const tabs: Array<{ href: string; label: string; scope: TrackerScope }> = [
   { href: "/", label: "All", scope: "all" },
   { href: "/books", label: "Books", scope: "Book" },
@@ -297,6 +305,10 @@ function getVisibleItems(items: Entry[], scope: TrackerScope) {
   return activeItems.filter((item) => item.kind === scope);
 }
 
+function sortEntries(items: Entry[]) {
+  return [...items].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
 function getStatusCopy(status: EntryStatus) {
   if (status === "Done") {
     return "Completed";
@@ -313,17 +325,46 @@ async function readPayload<T>(response: Response) {
   return (await response.json().catch(() => ({}))) as T;
 }
 
+async function fetchEntries() {
+  if (entryRequest) {
+    return entryRequest;
+  }
+
+  entryRequest = fetch("/api/entries")
+    .then((response) => readPayload<{ entries?: Entry[]; error?: string }>(response).then((payload) => ({ response, payload })))
+    .then(({ response, payload }) => {
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to load entries.");
+      }
+
+      return payload.entries ?? [];
+    })
+    .finally(() => {
+      entryRequest = null;
+    });
+
+  return entryRequest;
+}
+
+function updateEntryCache(userId: string, entries: Entry[]) {
+  entryCache = {
+    userId,
+    entries,
+  };
+}
+
 export function MinimalTracker({
-  initialEntries,
   scope,
   userEmail,
+  userId,
 }: {
-  initialEntries: Entry[];
   scope: TrackerScope;
   userEmail: string;
+  userId: string;
 }) {
   const router = useRouter();
-  const [items, setItems] = useState(initialEntries);
+  const [items, setItems] = useState<Entry[]>(() => (entryCache?.userId === userId ? entryCache.entries : []));
+  const [isLoadingEntries, setIsLoadingEntries] = useState(() => !(entryCache?.userId === userId));
   const [draft, setDraft] = useState(() => createDefaultDraft(scope));
   const [isSaving, setIsSaving] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -334,6 +375,7 @@ export function MinimalTracker({
   const [debouncedTitle, setDebouncedTitle] = useState(draft.title);
   const searchCacheRef = useRef(new Map<string, SearchSuggestion[]>());
   const showMetaCacheRef = useRef(new Map<string, ShowMeta | null>());
+  const itemsRef = useRef(items);
 
   const page = pageCopy[scope];
   const visibleItems = getVisibleItems(items, scope);
@@ -346,6 +388,62 @@ export function MinimalTracker({
   const shouldSearchSuggestions = shouldSearchBooks || shouldSearchImdb || shouldSearchAniList;
   const searchTerm = debouncedTitle.trim();
   const canSave = Boolean(draft.title.trim()) && (activeKind !== "Article" || Boolean(draft.url.trim()));
+
+  function commitItems(next: Entry[]) {
+    itemsRef.current = next;
+    setItems(next);
+    updateEntryCache(userId, next);
+  }
+
+  useEffect(() => {
+    if (entryCache?.userId === userId) {
+      setItems(entryCache.entries);
+      setIsLoadingEntries(false);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingEntries(true);
+
+    fetchEntries()
+      .then((entries) => {
+        if (!isMounted) {
+          return;
+        }
+
+        updateEntryCache(userId, entries);
+        commitItems(entries);
+      })
+      .catch((loadError) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setError(loadError instanceof Error ? loadError.message : "Unable to load entries.");
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoadingEntries(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    tabs
+      .filter((tab) => tab.href !== "/" || scope !== "all")
+      .filter((tab) => tab.scope !== scope)
+      .forEach((tab) => {
+        router.prefetch(tab.href);
+      });
+  }, [router, scope]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -533,7 +631,7 @@ export function MinimalTracker({
 
       const entry = payload.entry;
 
-      setItems((current) => [entry, ...current]);
+      commitItems([entry, ...itemsRef.current]);
       setDraft(createDefaultDraft(scope));
       setSuggestions([]);
     } catch (submissionError) {
@@ -543,7 +641,25 @@ export function MinimalTracker({
     }
   }
 
-  async function patchEntry(entryId: string, patch: Partial<Entry>) {
+  async function patchEntry(entryId: string, patch: Partial<Entry>, optimistic?: Partial<Entry>) {
+    const previous = itemsRef.current;
+
+    if (optimistic) {
+      const optimisticItems = sortEntries(
+        previous.map((item) =>
+          item.id === entryId
+            ? {
+                ...item,
+                ...optimistic,
+                updatedAt: new Date().toISOString(),
+              }
+            : item,
+        ),
+      );
+
+      commitItems(optimisticItems);
+    }
+
     const response = await fetch(`/api/entries/${entryId}`, {
       method: "PATCH",
       headers: {
@@ -555,19 +671,25 @@ export function MinimalTracker({
     const payload = await readPayload<{ entry?: Entry; error?: string }>(response);
 
     if (!response.ok || !payload.entry) {
+      if (optimistic) {
+        commitItems(previous);
+      }
+
       throw new Error(payload.error || "Unable to update entry.");
     }
 
     const entry = payload.entry;
-
-    setItems((current) =>
-      current
-        .map((item) => (item.id === entryId ? entry : item))
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-    );
+    const next = sortEntries(itemsRef.current.map((item) => (item.id === entryId ? entry : item)));
+    commitItems(next);
   }
 
-  async function deleteEntry(entryId: string) {
+  async function deleteEntry(entryId: string, optimistic = true) {
+    const previous = itemsRef.current;
+
+    if (optimistic) {
+      commitItems(previous.filter((item) => item.id !== entryId));
+    }
+
     const response = await fetch(`/api/entries/${entryId}`, {
       method: "DELETE",
     });
@@ -575,17 +697,19 @@ export function MinimalTracker({
     const payload = await readPayload<{ ok?: boolean; error?: string }>(response);
 
     if (!response.ok || !payload.ok) {
+      if (optimistic) {
+        commitItems(previous);
+      }
+
       throw new Error(payload.error || "Unable to remove entry.");
     }
-
-    setItems((current) => current.filter((item) => item.id !== entryId));
   }
 
   async function handleStatusChange(item: Entry, status: EntryStatus) {
     setError("");
 
     try {
-      await patchEntry(item.id, { status });
+      await patchEntry(item.id, { status }, { status });
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to update entry.");
     }
@@ -595,7 +719,8 @@ export function MinimalTracker({
     setError("");
 
     try {
-      await patchEntry(item.id, { pageNumber: clampPageNumber(value) });
+      const pageNumber = clampPageNumber(value);
+      await patchEntry(item.id, { pageNumber }, { pageNumber });
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to update entry.");
     }
@@ -612,11 +737,16 @@ export function MinimalTracker({
         typeof patch.currentSeason === "string" ? clampCounter(patch.currentSeason) : item.currentSeason;
       const nextEpisode =
         typeof patch.currentEpisode === "string" ? clampCounter(patch.currentEpisode) : item.currentEpisode;
+      const status = item.status === "Done" ? "Done" : nextEpisode > 0 || nextSeason > 1 ? "In progress" : "To start";
 
       await patchEntry(item.id, {
         currentSeason: nextSeason,
         currentEpisode: nextEpisode,
-        status: item.status === "Done" ? "Done" : nextEpisode > 0 || nextSeason > 1 ? "In progress" : "To start",
+        status,
+      }, {
+        currentSeason: nextSeason,
+        currentEpisode: nextEpisode,
+        status,
       });
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to update show progress.");
@@ -628,10 +758,14 @@ export function MinimalTracker({
 
     try {
       const nextChapter = clampCounter(value);
+      const status = item.status === "Done" ? "Done" : nextChapter > 0 ? "In progress" : "To start";
 
       await patchEntry(item.id, {
         currentChapter: nextChapter,
-        status: item.status === "Done" ? "Done" : nextChapter > 0 ? "In progress" : "To start",
+        status,
+      }, {
+        currentChapter: nextChapter,
+        status,
       });
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to update manga progress.");
@@ -642,7 +776,7 @@ export function MinimalTracker({
     setError("");
 
     try {
-      await deleteEntry(item.id);
+      await deleteEntry(item.id, true);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to remove entry.");
     }
@@ -652,7 +786,7 @@ export function MinimalTracker({
     setError("");
 
     try {
-      await patchEntry(item.id, { favorite: !item.favorite });
+      await patchEntry(item.id, { favorite: !item.favorite }, { favorite: !item.favorite });
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to update favorite.");
     }
@@ -663,6 +797,8 @@ export function MinimalTracker({
     setError("");
 
     try {
+      entryCache = null;
+      entryRequest = null;
       await fetch("/api/auth/logout", { method: "POST" });
       router.refresh();
     } finally {
@@ -954,7 +1090,13 @@ export function MinimalTracker({
             scope === "all" || scope === "archive" ? "panel panel--list panel--list-full" : "panel panel--list"
           }
         >
-          {visibleItems.length > 0 ? (
+          {isLoadingEntries ? (
+            <article className="empty-state">
+              <p className="eyebrow">Loading</p>
+              <h2>Pulling your shelves in.</h2>
+              <p>One moment.</p>
+            </article>
+          ) : visibleItems.length > 0 ? (
             <div className="entry-list">
               {visibleItems.map((item) => (
                 <article className="entry-card" key={item.id}>
