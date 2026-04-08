@@ -22,6 +22,6 @@ npm run dev
 
 ## Notes
 
-- User accounts and entries are stored in `data/store.json`.
+- User accounts and entries are stored in Supabase
 - Session auth uses an HTTP-only signed cookie.
 - This backend is intentionally lightweight and local-friendly. It is good for personal use and prototyping.
