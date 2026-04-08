@@ -1,0 +1,63 @@
+{
+  "users": [
+    {
+      "id": "77ad28ec-0ceb-4d30-bb79-5bef501da0c2",
+      "email": "aniket-admin@example.com",
+      "passwordHash": "76b01b2fa12a7e3314fd45e5a2d55f3ae0df856fd21fde2dca105b331ce6da445eab62a9ab36877371d23b0eeec2af57469b2e32cd16edfd5afbdb6921ed02fa",
+      "salt": "3ba4f3b3e7c30d42dba72cb3a4d34e75",
+      "createdAt": "2026-04-06T11:26:54.459Z"
+    }
+  ],
+  "entries": [
+    {
+      "id": "820edc78-632e-4c7e-9661-190f302c4182",
+      "userId": "77ad28ec-0ceb-4d30-bb79-5bef501da0c2",
+      "title": "be delusional about your potential",
+      "creator": "",
+      "kind": "Article",
+      "status": "To start",
+      "pageNumber": 0,
+      "url": "https://fatimanotes.substack.com/p/be-delusional-about-your-potential",
+      "createdAt": "2026-04-06T12:51:19.332Z",
+      "updatedAt": "2026-04-06T12:51:19.332Z"
+    },
+    {
+      "id": "e4c808a1-ca15-4a21-a54c-ae5ba50bf880",
+      "userId": "77ad28ec-0ceb-4d30-bb79-5bef501da0c2",
+      "title": "Do Not Hide",
+      "creator": "",
+      "kind": "Article",
+      "status": "To start",
+      "pageNumber": 0,
+      "url": "https://nathanieldrew.substack.com/p/do-not-hide",
+      "createdAt": "2026-04-06T12:44:56.465Z",
+      "updatedAt": "2026-04-06T12:44:56.465Z"
+    },
+    {
+      "id": "edad03cb-c413-429f-b6c7-4dda52617574",
+      "userId": "77ad28ec-0ceb-4d30-bb79-5bef501da0c2",
+      "title": "Little Life",
+      "creator": "Hanya Yanagihara",
+      "kind": "Book",
+      "status": "In progress",
+      "pageNumber": 350,
+      "url": "",
+      "createdAt": "2026-04-06T12:04:25.407Z",
+      "updatedAt": "2026-04-06T12:44:27.576Z"
+    },
+    {
+      "id": "69926460-82c1-49c2-87c1-40e61aaab896",
+      "userId": "77ad28ec-0ceb-4d30-bb79-5bef501da0c2",
+      "title": "test",
+      "creator": "aniket",
+      "kind": "Book",
+      "status": "Done",
+      "progress": 80,
+      "url": "",
+      "note": "",
+      "createdAt": "2026-04-06T11:48:47.153Z",
+      "updatedAt": "2026-04-06T12:04:30.965Z",
+      "pageNumber": 80
+    }
+  ]
+}
